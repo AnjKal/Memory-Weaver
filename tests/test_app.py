@@ -5,6 +5,7 @@ import io
 import os
 import re
 import tempfile
+import time
 import unittest
 import wave
 import zipfile
@@ -673,6 +674,81 @@ class MemoryWeaverTests(unittest.TestCase):
         storybook = self.client.get("/api/archive/storybook.pdf")
         self.assertEqual(storybook.status_code, 200)
         self.assertTrue(storybook.content.startswith(b"%PDF"))
+
+    def test_story_people_can_be_removed_from_a_memory(self) -> None:
+        story_id = self.client.post(
+            "/api/stories",
+            headers=self.csrf_headers,
+            json={"title": "Family dinner", "content": "Everyone gathered together."},
+        ).json()["id"]
+        first_person = self.client.post(
+            "/api/archive/people",
+            headers=self.csrf_headers,
+            json={"name": "Ammamma", "relation": "Grandmother"},
+        ).json()["id"]
+        second_person = self.client.post(
+            "/api/archive/people",
+            headers=self.csrf_headers,
+            json={"name": "Ajja", "relation": "Grandfather"},
+        ).json()["id"]
+
+        self.assertEqual(
+            self.client.post(
+                f"/api/archive/stories/{story_id}/people/{first_person}",
+                headers=self.csrf_headers,
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/api/archive/stories/{story_id}/people/{second_person}",
+                headers=self.csrf_headers,
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.delete(
+                f"/api/archive/stories/{story_id}/people/{first_person}",
+                headers=self.csrf_headers,
+            ).status_code,
+            200,
+        )
+
+        story = next(
+            item
+            for item in self.client.get("/api/stories").json()["stories"]
+            if item["id"] == story_id
+        )
+        self.assertEqual({person["id"] for person in story["people"]}, {second_person})
+
+    def test_capsules_require_a_future_unlock_date(self) -> None:
+        past = self.client.post(
+            "/api/archive/capsules",
+            headers=self.csrf_headers,
+            json={
+                "title": "Too soon",
+                "content": "This should not unlock immediately.",
+                "recipient_user_id": None,
+                "unlock_at": int(time.time()) - 10,
+            },
+        )
+        self.assertEqual(past.status_code, 422)
+        self.assertEqual(
+            past.json()["detail"],
+            "Choose an unlock date in the future",
+        )
+
+        future = self.client.post(
+            "/api/archive/capsules",
+            headers=self.csrf_headers,
+            json={
+                "title": "For next year",
+                "content": "Open this later.",
+                "recipient_user_id": None,
+                "unlock_at": int(time.time()) + 86400,
+            },
+        )
+        self.assertEqual(future.status_code, 200)
 
     @patch("memory_weaver.app.get_openai_client")
     def test_collaborative_interview_access(self, openai_client) -> None:

@@ -562,6 +562,27 @@ def attach_person(
     return JSONResponse({"status": "ok"})
 
 
+@router.delete("/stories/{story_id}/people/{person_id}")
+def detach_person(
+    story_id: int,
+    person_id: int,
+    request: Request,
+    _: None = Depends(verify_csrf),
+) -> JSONResponse:
+    uid = current_uid(request)
+    with db_session() as session:
+        story_for_user(session, story_id, uid, edit=True)
+        link = session.scalar(
+            select(StoryPerson).where(
+                StoryPerson.story_id == story_id,
+                StoryPerson.person_id == person_id,
+            )
+        )
+        if link:
+            session.delete(link)
+    return JSONResponse({"status": "ok"})
+
+
 def media_kind_and_type(upload: UploadFile, data: bytes) -> tuple[str, str]:
     reported = (upload.content_type or "").split(";", 1)[0].lower().strip()
     for mime, validator in IMAGE_SIGNATURES.items():
@@ -793,6 +814,10 @@ def create_capsule(
     _: None = Depends(verify_csrf),
 ) -> JSONResponse:
     uid = current_uid(request)
+    if payload.unlock_at <= int(time.time()):
+        raise HTTPException(
+            status_code=422, detail="Choose an unlock date in the future"
+        )
     with db_session() as session:
         if payload.recipient_user_id not in {None, *connected_ids(session, uid)}:
             raise HTTPException(status_code=422, detail="Choose a connected relative")
